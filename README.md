@@ -1,6 +1,6 @@
 # QR Code Generator API
 
-![Node.js](https://img.shields.io/badge/node-20-brightgreen) ![Express](https://img.shields.io/badge/express-4.x-blue) ![License](https://img.shields.io/badge/license-MIT-green)
+![Node.js](https://img.shields.io/badge/node-20-brightgreen) ![Express](https://img.shields.io/badge/express-4.x-blue) ![tests](https://img.shields.io/badge/tests-passing-brightgreen) ![License](https://img.shields.io/badge/license-MIT-green)
 
 REST API to generate QR codes in PNG and SVG formats with custom colors, sizes, and optional center logo overlay. Supports batch generation of up to 20 QR codes per request.
 
@@ -83,6 +83,13 @@ curl -X POST http://localhost:3000/api/qr \
 |----------|---------|-------------|
 | `PORT` | `3000` | Puerto del servidor |
 
+## Notas de seguridad
+
+- `logo` solo acepta data URIs base64 `png`, `jpeg`, `jpg`, `webp` o `gif`
+- El logo tiene limite de `1MB` para evitar payloads excesivos
+- Se validan `margin`, `size`, colores hex y longitud maxima del contenido QR
+- El API responde JSON tambien ante body JSON malformado
+
 ## Docker
 
 ```bash
@@ -90,12 +97,20 @@ docker build -t qr-api .
 docker run -p 3000:3000 qr-api
 ```
 
+El contenedor expone `3000` y define `HEALTHCHECK` sobre `GET /health`.
+
 ## Tests
 
 ```bash
 npm test
-# 20 tests — 100% pass
+# 26 tests — 100% pass
 ```
+
+## Roadmap
+
+- Soporte opcional para descargar ZIP en `/api/qr/batch`
+- Paletas y presets visuales reutilizables para branding
+- Endpoint para validar contraste antes de generar el QR
 
 ## Contribuir
 

@@ -3,13 +3,21 @@ const QRCode = require('qrcode');
 const sharp = require('sharp');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const VERSION = '1.1.0';
+const MAX_QR_TEXT_LENGTH = 2953;
+const MAX_LOGO_BYTES = 1024 * 1024;
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'no-referrer');
+  next();
+});
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,
@@ -19,7 +27,13 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'qr-code-generator-api', version: '1.0.0' });
+  res.json({
+    status: 'ok',
+    service: 'qr-code-generator-api',
+    version: VERSION,
+    uptime: Number(process.uptime().toFixed(2)),
+    node: process.version
+  });
 });
 
 function parseColor(color) {
@@ -39,6 +53,46 @@ function validateErrorCorrection(level) {
   const valid = ['L', 'M', 'Q', 'H'];
   const upper = String(level).toUpperCase();
   return valid.includes(upper) ? upper : null;
+}
+
+function validateMargin(margin) {
+  const value = parseInt(margin, 10);
+  if (Number.isNaN(value) || value < 0 || value > 10) return null;
+  return value;
+}
+
+function validateText(text) {
+  if (typeof text !== 'string' || text.trim() === '') {
+    return '`text` is required and must be a non-empty string';
+  }
+
+  if (text.length > MAX_QR_TEXT_LENGTH) {
+    return `\`text\` exceeds maximum QR capacity (${MAX_QR_TEXT_LENGTH} chars)`;
+  }
+
+  return null;
+}
+
+function parseLogoDataUri(logoBase64) {
+  if (typeof logoBase64 !== 'string' || logoBase64.trim() === '') {
+    return { error: '`logo` must be a non-empty data URI string' };
+  }
+
+  const match = logoBase64.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) {
+    return { error: '`logo` must be a valid base64 data URI for png, jpeg, webp, or gif images' };
+  }
+
+  const logoBuffer = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+  if (logoBuffer.length === 0) {
+    return { error: '`logo` could not be decoded' };
+  }
+
+  if (logoBuffer.length > MAX_LOGO_BYTES) {
+    return { error: '`logo` exceeds maximum size of 1MB' };
+  }
+
+  return { buffer: logoBuffer };
 }
 
 async function generateQRBuffer(text, options) {
@@ -62,8 +116,14 @@ async function generateQRBuffer(text, options) {
 }
 
 async function overlayLogo(qrBuffer, logoBase64, size) {
-  const logoData = logoBase64.replace(/^data:image\/\w+;base64,/, '');
-  const logoBuffer = Buffer.from(logoData, 'base64');
+  const parsedLogo = parseLogoDataUri(logoBase64);
+  if (parsedLogo.error) {
+    const error = new Error(parsedLogo.error);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const logoBuffer = parsedLogo.buffer;
 
   const logoSize = Math.floor(size * 0.2);
 
@@ -84,11 +144,9 @@ async function overlayLogo(qrBuffer, logoBase64, size) {
 app.post('/api/qr', async (req, res) => {
   const { text, size: rawSize, fgColor: rawFg, bgColor: rawBg, errorCorrection: rawEC, margin, logo } = req.body;
 
-  if (!text || typeof text !== 'string' || text.trim() === '') {
-    return res.status(400).json({ error: '`text` is required and must be a non-empty string' });
-  }
-  if (text.length > 2953) {
-    return res.status(400).json({ error: '`text` exceeds maximum QR capacity (2953 chars)' });
+  const textError = validateText(text);
+  if (textError) {
+    return res.status(400).json({ error: textError });
   }
 
   const size = rawSize ? validateSize(rawSize) : 300;
@@ -103,8 +161,8 @@ app.post('/api/qr', async (req, res) => {
   const errorCorrection = rawEC ? validateErrorCorrection(rawEC) : 'M';
   if (errorCorrection === null) return res.status(400).json({ error: '`errorCorrection` must be L, M, Q, or H' });
 
-  const marginVal = margin !== undefined ? parseInt(margin, 10) : 1;
-  if (isNaN(marginVal) || marginVal < 0 || marginVal > 10) {
+  const marginVal = margin !== undefined ? validateMargin(margin) : 1;
+  if (marginVal === null) {
     return res.status(400).json({ error: '`margin` must be between 0 and 10' });
   }
 
@@ -122,7 +180,8 @@ app.post('/api/qr', async (req, res) => {
     res.set('Content-Disposition', 'inline; filename="qrcode.png"');
     res.send(qrBuffer);
   } catch (err) {
-    res.status(500).json({ error: 'QR generation failed', details: err.message });
+    const status = err.statusCode || 500;
+    res.status(status).json({ error: status === 500 ? 'QR generation failed' : err.message });
   }
 });
 
@@ -130,11 +189,9 @@ app.post('/api/qr', async (req, res) => {
 app.get('/api/qr', async (req, res) => {
   const { text, size: rawSize, fgColor: rawFg, bgColor: rawBg, errorCorrection: rawEC, margin } = req.query;
 
-  if (!text || text.trim() === '') {
-    return res.status(400).json({ error: '`text` query param is required' });
-  }
-  if (text.length > 2953) {
-    return res.status(400).json({ error: '`text` exceeds maximum QR capacity (2953 chars)' });
+  const textError = validateText(text);
+  if (textError) {
+    return res.status(400).json({ error: text ? textError : '`text` query param is required' });
   }
 
   const size = rawSize ? validateSize(rawSize) : 300;
@@ -149,7 +206,8 @@ app.get('/api/qr', async (req, res) => {
   const errorCorrection = rawEC ? validateErrorCorrection(rawEC) : 'M';
   if (errorCorrection === null) return res.status(400).json({ error: '`errorCorrection` must be L, M, Q, or H' });
 
-  const marginVal = margin !== undefined ? parseInt(margin, 10) : 1;
+  const marginVal = margin !== undefined ? validateMargin(margin) : 1;
+  if (marginVal === null) return res.status(400).json({ error: '`margin` must be between 0 and 10' });
 
   try {
     const qrBuffer = await generateQRBuffer(text, { size, fgColor, bgColor, errorCorrection, margin: marginVal });
@@ -165,11 +223,9 @@ app.get('/api/qr', async (req, res) => {
 app.post('/api/qr/svg', async (req, res) => {
   const { text, size: rawSize, fgColor: rawFg, bgColor: rawBg, errorCorrection: rawEC, margin } = req.body;
 
-  if (!text || typeof text !== 'string' || text.trim() === '') {
-    return res.status(400).json({ error: '`text` is required' });
-  }
-  if (text.length > 2953) {
-    return res.status(400).json({ error: '`text` exceeds maximum QR capacity' });
+  const textError = validateText(text);
+  if (textError) {
+    return res.status(400).json({ error: textError });
   }
 
   const size = rawSize ? validateSize(rawSize) : 300;
@@ -184,7 +240,8 @@ app.post('/api/qr/svg', async (req, res) => {
   const errorCorrection = rawEC ? validateErrorCorrection(rawEC) : 'M';
   if (errorCorrection === null) return res.status(400).json({ error: '`errorCorrection` must be L, M, Q, or H' });
 
-  const marginVal = margin !== undefined ? parseInt(margin, 10) : 1;
+  const marginVal = margin !== undefined ? validateMargin(margin) : 1;
+  if (marginVal === null) return res.status(400).json({ error: '`margin` must be between 0 and 10' });
 
   try {
     const svgString = await QRCode.toString(text, {
@@ -229,8 +286,9 @@ app.post('/api/qr/batch', async (req, res) => {
   try {
     const results = await Promise.all(
       items.map(async (text, i) => {
-        if (typeof text !== 'string' || text.trim() === '') {
-          return { index: i, error: 'Item must be a non-empty string' };
+        const itemError = validateText(text);
+        if (itemError) {
+          return { index: i, error: itemError };
         }
         try {
           const buf = await generateQRBuffer(text, { size, fgColor, bgColor, errorCorrection, margin: 1 });
@@ -275,5 +333,17 @@ if (require.main === module) {
     console.log(`QR Code Generator API running on port ${PORT}`);
   });
 }
+
+app.use((err, _req, res, _next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Malformed JSON body' });
+  }
+
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body exceeds 1MB limit' });
+  }
+
+  return res.status(500).json({ error: 'Unexpected server error' });
+});
 
 module.exports = app;

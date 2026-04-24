@@ -17,7 +17,11 @@ before(async () => {
   });
 });
 
-after(() => server.close());
+after(() => {
+  if (server) {
+    server.close();
+  }
+});
 
 async function request(method, path, body) {
   return new Promise((resolve, reject) => {
@@ -45,11 +49,40 @@ async function request(method, path, body) {
   });
 }
 
+async function requestRaw(method, path, rawBody, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, baseURL);
+    const options = {
+      method,
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname + url.search,
+      headers
+    };
+    const req = http.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks);
+        let data;
+        try { data = JSON.parse(raw.toString()); } catch { data = raw; }
+        resolve({ status: res.statusCode, headers: res.headers, data });
+      });
+    });
+    req.on('error', reject);
+    if (rawBody) req.write(rawBody);
+    req.end();
+  });
+}
+
 describe('GET /health', () => {
   it('returns status ok', async () => {
     const res = await request('GET', '/health');
     assert.equal(res.status, 200);
     assert.equal(res.data.status, 'ok');
+    assert.equal(res.data.version, '1.1.0');
+    assert.ok(res.data.node.startsWith('v'));
+    assert.equal(res.headers['x-content-type-options'], 'nosniff');
   });
 });
 
@@ -84,6 +117,12 @@ describe('GET /api/qr', () => {
   it('returns 400 for invalid fgColor', async () => {
     const res = await request('GET', '/api/qr?text=test&fgColor=notacolor');
     assert.equal(res.status, 400);
+  });
+
+  it('returns 400 for invalid margin', async () => {
+    const res = await request('GET', '/api/qr?text=test&margin=50');
+    assert.equal(res.status, 400);
+    assert.match(res.data.error, /margin/);
   });
 });
 
@@ -123,6 +162,30 @@ describe('POST /api/qr', () => {
     assert.equal(res.status, 400);
     assert.ok(res.data.error.includes('errorCorrection'));
   });
+
+  it('returns 400 for invalid logo data uri', async () => {
+    const res = await request('POST', '/api/qr', {
+      text: 'test',
+      errorCorrection: 'H',
+      logo: 'not-a-data-uri'
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.data.error, /data URI/);
+  });
+
+  it('returns 400 for invalid margin', async () => {
+    const res = await request('POST', '/api/qr', { text: 'test', margin: -1 });
+    assert.equal(res.status, 400);
+    assert.match(res.data.error, /margin/);
+  });
+
+  it('returns 400 for malformed JSON body', async () => {
+    const res = await requestRaw('POST', '/api/qr', '{"text":', {
+      'Content-Type': 'application/json'
+    });
+    assert.equal(res.status, 400);
+    assert.equal(res.data.error, 'Malformed JSON body');
+  });
 });
 
 describe('POST /api/qr/svg', () => {
@@ -135,6 +198,12 @@ describe('POST /api/qr/svg', () => {
   it('returns 400 for missing text', async () => {
     const res = await request('POST', '/api/qr/svg', {});
     assert.equal(res.status, 400);
+  });
+
+  it('returns 400 for invalid margin', async () => {
+    const res = await request('POST', '/api/qr/svg', { text: 'hello svg', margin: 99 });
+    assert.equal(res.status, 400);
+    assert.match(res.data.error, /margin/);
   });
 });
 
@@ -167,6 +236,14 @@ describe('POST /api/qr/batch', () => {
     assert.equal(res.status, 200);
     assert.equal(res.data.count, 3);
     assert.ok(res.data.results[1].error);
+  });
+
+  it('reports over-capacity items without failing the whole batch', async () => {
+    const res = await request('POST', '/api/qr/batch', {
+      items: ['ok', 'a'.repeat(2954)]
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.data.results[1].error, /maximum QR capacity/);
   });
 });
 
