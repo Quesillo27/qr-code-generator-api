@@ -80,7 +80,7 @@ describe('GET /health', () => {
     const res = await request('GET', '/health');
     assert.equal(res.status, 200);
     assert.equal(res.data.status, 'ok');
-    assert.equal(res.data.version, '1.1.0');
+    assert.equal(res.data.version, '1.1.1');
     assert.ok(res.data.node.startsWith('v'));
     assert.equal(res.headers['x-content-type-options'], 'nosniff');
   });
@@ -217,6 +217,16 @@ describe('POST /api/qr/batch', () => {
     assert.ok(res.data.results[0].image.startsWith('data:image/png;base64,'));
   });
 
+  it('accepts custom margin for all batch items', async () => {
+    const res = await request('POST', '/api/qr/batch', {
+      items: ['https://example.com', 'hello world'],
+      margin: 4
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.data.count, 2);
+    assert.ok(res.data.results.every((item) => item.image && item.image.startsWith('data:image/png;base64,')));
+  });
+
   it('returns 400 for empty items', async () => {
     const res = await request('POST', '/api/qr/batch', { items: [] });
     assert.equal(res.status, 400);
@@ -227,6 +237,15 @@ describe('POST /api/qr/batch', () => {
       items: Array(21).fill('test')
     });
     assert.equal(res.status, 400);
+  });
+
+  it('returns 400 for invalid margin', async () => {
+    const res = await request('POST', '/api/qr/batch', {
+      items: ['test'],
+      margin: 99
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.data.error, /margin/);
   });
 
   it('handles mixed valid/invalid items gracefully', async () => {

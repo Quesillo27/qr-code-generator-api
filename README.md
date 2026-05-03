@@ -36,10 +36,10 @@ curl -X POST http://localhost:3000/api/qr/svg \
   -d '{"text":"hello world","size":300}' \
   --output qr.svg
 
-# Batch: 3 QR codes en base64
+# Batch: 3 QR codes en base64 con margen personalizado
 curl -X POST http://localhost:3000/api/qr/batch \
   -H "Content-Type: application/json" \
-  -d '{"items":["https://example.com","Hello World","12345"]}' \
+  -d '{"items":["https://example.com","Hello World","12345"],"margin":2}' \
   | jq '.results[0].image' | head -c 80
 # → "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
 ```
@@ -52,7 +52,7 @@ curl -X POST http://localhost:3000/api/qr/batch \
 | `GET` | `/api/qr` | Genera QR PNG via query params |
 | `POST` | `/api/qr` | Genera QR PNG via JSON body (soporta logo) |
 | `POST` | `/api/qr/svg` | Genera QR en formato SVG |
-| `POST` | `/api/qr/batch` | Genera hasta 20 QR codes en base64 |
+| `POST` | `/api/qr/batch` | Genera hasta 20 QR codes en base64, con opciones visuales compartidas |
 | `GET` | `/api/qr/info` | Metadata: capacidades, niveles de correccion |
 
 ### Parametros comunes
@@ -90,6 +90,10 @@ curl -X POST http://localhost:3000/api/qr \
 - Se validan `margin`, `size`, colores hex y longitud maxima del contenido QR
 - El API responde JSON tambien ante body JSON malformado
 
+## Version
+
+Actual: `1.1.1`
+
 ## Docker
 
 ```bash
@@ -103,7 +107,7 @@ El contenedor expone `3000` y define `HEALTHCHECK` sobre `GET /health`.
 
 ```bash
 npm test
-# 26 tests — 100% pass
+# 28 tests — 100% pass
 ```
 
 ## Roadmap

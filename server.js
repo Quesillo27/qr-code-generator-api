@@ -6,7 +6,7 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const MAX_QR_TEXT_LENGTH = 2953;
 const MAX_LOGO_BYTES = 1024 * 1024;
 
@@ -262,7 +262,7 @@ app.post('/api/qr/svg', async (req, res) => {
 
 // POST /api/qr/batch — generate multiple QR codes as JSON array of base64 PNGs
 app.post('/api/qr/batch', async (req, res) => {
-  const { items, size: rawSize, fgColor: rawFg, bgColor: rawBg, errorCorrection: rawEC } = req.body;
+  const { items, size: rawSize, fgColor: rawFg, bgColor: rawBg, errorCorrection: rawEC, margin } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: '`items` must be a non-empty array of strings' });
@@ -283,6 +283,9 @@ app.post('/api/qr/batch', async (req, res) => {
   const errorCorrection = rawEC ? validateErrorCorrection(rawEC) : 'M';
   if (errorCorrection === null) return res.status(400).json({ error: '`errorCorrection` must be L, M, Q, or H' });
 
+  const marginVal = margin !== undefined ? validateMargin(margin) : 1;
+  if (marginVal === null) return res.status(400).json({ error: '`margin` must be between 0 and 10' });
+
   try {
     const results = await Promise.all(
       items.map(async (text, i) => {
@@ -291,7 +294,7 @@ app.post('/api/qr/batch', async (req, res) => {
           return { index: i, error: itemError };
         }
         try {
-          const buf = await generateQRBuffer(text, { size, fgColor, bgColor, errorCorrection, margin: 1 });
+          const buf = await generateQRBuffer(text, { size, fgColor, bgColor, errorCorrection, margin: marginVal });
           return { index: i, text, image: `data:image/png;base64,${buf.toString('base64')}` };
         } catch (err) {
           return { index: i, text, error: err.message };

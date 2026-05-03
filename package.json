@@ -1,6 +1,6 @@
 {
   "name": "qr-code-generator-api",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "REST API to generate QR codes in PNG/SVG with custom colors, sizes, and center logo",
   "main": "server.js",
   "scripts": {
